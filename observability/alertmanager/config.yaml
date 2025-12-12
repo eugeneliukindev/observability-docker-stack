@@ -1,0 +1,69 @@
+global:
+  smtp_smarthost: 'your.smtp.host:587'
+  smtp_from: 'alerts@yourdomain.com'
+  smtp_auth_username: 'your@email.com'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+  telegram_api_url: 'https://api.telegram.org'
+
+route:
+  receiver: 'default-receiver'
+  #Собирает алерты в группы по лейблам.
+  #Пример: есть 10 серверов с алертом CPUHigh. Если их все включить в одну группу по alertname, придёт одно уведомление с 10 серверами, а не 10 отдельных сообщений.
+  #Обычно используют alertname + severity (уровень важности), иногда добавляют instance, если нужен контроль по конкретной машине.
+  group_by: [ 'alertname', 'severity' ]
+  #Время ожидания перед первой отправкой уведомления группы.
+  #Пример: если alert только что появился, Alertmanager подождёт group_wait секунд, чтобы собрать похожие алерты в одну группу, прежде чем отправить.
+  #Часто ставят 30s–1m, чтобы не спамить при всплеске алертов. 0s — значит уведомление сразу уйдёт.
+  group_wait: 30s
+  #Интервал между повторной отправкой уведомлений одной группы.
+  #Пример: у тебя алерт CPUHigh с 10 серверами. После отправки уведомления, если алерты не изменились, следующая группа отправится не раньше, чем через 5 минут.
+  #Это помогает уменьшить спам, если алерты долго держатся.
+  group_interval: 5m
+  #Время, через которое одно и то же уведомление будет повторно отправлено, если алерт всё ещё активен.
+  #Пример: сервер долго падает. Мы не хотим каждый 5 минут получать уведомление (group_interval) о том же самом, но хотим напомнить админам каждые 4 часа.
+  repeat_interval: 4h
+  #Дополнительные фильтры для маршрутизации.
+  #Пример: severity="critical" — уведомления с уровнем critical пойдут в один ресивер, остальные — в другой.
+  #Пустой список = без фильтров, всё идёт по умолчанию.
+  matchers: [ ]
+
+# GO шаблоны работают только в отправке сообщений!
+
+receivers:
+  - name: 'default-receiver'
+    email_configs:
+      - to: 'recipient@email.com'
+        send_resolved: true
+        headers:
+          Subject: "[ALERT] {{ .CommonLabels.alertname }} - {{ .CommonLabels.severity }}"
+        html: |
+          <b>Alert: {{ .CommonLabels.alertname }}</b><br>
+          Severity: {{ .CommonLabels.severity }}<br>
+          Summary: {{ .CommonAnnotations.summary }}<br>
+          Description: {{ .CommonAnnotations.description }}
+
+    telegram_configs:
+      - bot_token: "8373405413:AAFOkcRgFB4W0Vt1LVt6VCcDiTuEb-pp7fg"
+        chat_id: 2104928674
+        send_resolved: true
+        parse_mode: 'HTML'
+        message: |
+          <b>Alert: {{ .CommonLabels.alertname }}</b>
+          Severity: {{ .CommonLabels.severity }}
+          Summary: {{ .CommonAnnotations.summary }}
+          Description: {{ .CommonAnnotations.description }}
+
+#Идея: если есть критический алерт, то подавляем связанные предупреждения (чтобы не спамить).
+#source_matchers — алерты, которые «глушат» другие.
+#В примере: severity = critical → критические алерты.
+#target_matchers — алерты, которые будут подавлены.
+#В примере: severity = warning → предупреждения того же алерта.
+#equal — по каким лейблам проверять совпадение, чтобы подавить только те, что относятся к тому же алерту.
+#В примере: alertname → только warnings с тем же именем, что критический alert.
+#Таким образом, если сервер падает и есть CPUHigh с critical, то алерты CPUHigh с warning не будут слать уведомления, пока критический активен.
+inhibit_rules:
+  - source_matchers: [ 'severity = critical' ]  # Если critical, подавлять warning
+    target_matchers: [ 'severity = warning' ]
+    equal: [ 'alertname' ]                      # По одинаковым именам алертов

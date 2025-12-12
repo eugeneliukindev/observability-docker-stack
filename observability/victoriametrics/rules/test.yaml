@@ -1,0 +1,17 @@
+groups:
+  - name: test-alerts
+    rules:
+      - alert: TestTelegramAlert
+        expr: time() - time() == 0
+        for: 0s
+        labels:
+          severity: critical
+          alertname: "TelegramTest"
+          instance: "test-server"
+        annotations:
+          summary: "🔥 ТЕСТ Telegram бота"
+          description: |
+            Проверка отправки уведомлений в Telegram!
+            Время: {{ $value }}
+            Сервер: {{ $labels.instance }}
+          telegram_message: "🚨 ТЕСТОВЫЙ АЛЕРТ! Проверка связи!"

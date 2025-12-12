@@ -1,0 +1,113 @@
+logging {
+  level  = "info"  // Временно на debug для диагностики; смените на info в production
+  format = "logfmt"
+}
+
+// Discovery Docker: Обнаруживает контейнеры и извлекает metadata. Host — ключевой для доступа к сокету.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "10s"
+}
+
+// Делает relabel
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label = "container_id"
+  }
+
+  rule {
+    target_label = "job"
+    replacement = "docker"
+  }
+  rule {
+    target_label = "host"
+    replacement = constants.hostname
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label = "stream"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_env"]
+    target_label = "env"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_network_mode"]
+    target_label = "network_mode"
+  }
+  rule {
+    source_labels = ["__meta_docker_network_ip"]
+    target_label = "network_ip"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_network_id"]
+    target_label = "network_id"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_port_public"]
+    target_label = "public_port"
+  }
+  rule {
+    source_labels = ["__meta_docker_port_public_ip"]
+    target_label = "public_ip"
+  }
+}
+
+// Loki source Docker: Собирает логи из контейнеров, применяет labels и relabel, forwards в write.
+loki.source.docker "default" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.containers.targets
+  labels        = {"platform" = "docker"}
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.write.local.receiver]
+}
+
+// Loki write: Отправляет логи в Loki. URL — полный endpoint.
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// Prometheus exporter: Собирает метрики хоста.
+prometheus.exporter.unix "default" {
+  enable_collectors = [
+    "arp", "bcache", "bonding", "btrfs", "buddyinfo", "conntrack", "cpu", "cpufreq",
+    "diskstats", "dmi", "drbd", "drm", "edac", "entropy", "ethtool", "fibrechannel",
+    "filefd", "filesystem", "hwmon", "infiniband", "interrupts", "ipvs", "ksmd",
+    "lnstat", "loadavg", "logind", "mdadm", "meminfo", "meminfo_numa", "mountstats",
+    "netclass", "netdev", "netstat", "network_route", "nfs", "nfsd", "ntp", "nvme",
+    "os", "perf", "powersupplyclass", "pressure", "processes", "qdisc", "rapl",
+    "runit", "schedstat", "sockstat", "softirqs", "softnet", "stat", "supervisord",
+    "sysctl", "systemd", "tapestats", "tcpstat", "textfile", "thermal_zone", "time",
+    "timex", "udp_queues", "uname", "vmstat", "wifi", "xfs", "zfs", "zoneinfo",
+  ]
+}
+
+// Prometheus scrape: Скрапаем метрики c хоста (ноды).
+prometheus.scrape "node" {
+  targets         = prometheus.exporter.unix.default.targets
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+}
+
+// Prometheus remote write: Отправляет метрики в victoriametrics.
+prometheus.remote_write "victoriametrics" {
+  endpoint {
+    url = "http://victoriametrics:8428/api/v1/write"
+  }
+}
