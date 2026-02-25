@@ -2,11 +2,8 @@ services:
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.131.0
     container_name: victoriametrics
-    ports:
-      - "8428:8428"  # HTTP порт (UI, API)
-      - "8089:8089"  # Graphite
-      - "2003:2003"  # Graphite plaintext
-      - "4242:4242"  # OpenTSDB
+    expose:
+      - "8428"
     volumes:
       - victoriametrics_data:/storage
     command:
@@ -18,22 +15,36 @@ services:
       - -envflag.enable=true
       - -envflag.prefix=VM_
       - -loggerFormat=json
+      - -enableTCP6
+      - -search.enableExperimentalFeatures
     environment:
-      VM_retentionPeriod: 12  # Хранение данных 12 месяцев
+      VM_retentionPeriod: 12
       VM_search_maxUniqueTimeseries: 1000000
     healthcheck:
-      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8428/health" ]
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8428/health || exit 1" ]
+      start_period: 5s
       interval: 30s
-      timeout: 10s
+      timeout: 3s
       retries: 3
     networks:
-      - monitor_network
+      - observability_network
 
   vmalert:
     image: victoriametrics/vmalert:v1.131.0
     container_name: vmalert
-    ports:
-      - "8880:8880"
+    expose:
+      - "8880"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8880/health || exit 1" ]
+      start_period: 3s
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
     volumes:
       - ./victoriametrics/rules:/etc/rules
     command:
@@ -43,7 +54,7 @@ services:
       - '--notifier.url=http://alertmanager:9093'
       - '--rule=/etc/rules/*.yaml'
     networks:
-      - monitor_network
+      - observability_network
 
   alertmanager:
     image: prom/alertmanager:v0.29.0
@@ -53,23 +64,34 @@ services:
     command:
       - '--config.file=/etc/alertmanager/config.yaml'
       - '--storage.path=/alertmanager'
-    ports:
-      - "9093:9093"
+    expose:
+      - "9093"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:9093/-/healthy || exit 1" ]
+      start_period: 3s
+      interval: 30s
+      timeout: 3s
+      retries: 3
     networks:
-      - monitor_network
+      - observability_network
 
   alloy:
     image: grafana/alloy:v1.12.0
     container_name: alloy
     privileged: true
+    expose:
+      - "12345" # alloy ui
+      - "4040"  # pyroscope
+      - "4317"  # otelcol grpc
+      - "4318"  # otelcol http
     ports:
       - "12345:12345"
-      - "4317:4317"
-      - "4318:4318"
+    env_file:
+      - .env
     environment:
       ALLOY_DEPLOY_MODE: docker
     volumes:
-      - ./alloy/config.alloy:/etc/alloy/config.alloy
+      - ./alloy:/etc/alloy
       - /proc:/rootproc:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - /sys:/sys:ro
@@ -81,30 +103,37 @@ services:
       - "host.docker.internal:host-gateway"
     devices:
       - /dev/kmsg
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
     networks:
-      - monitor_network
+      - observability_network
 
   loki:
-    image: grafana/loki:main-f22e854
+    # На версии 3.6.0 не работает healthcheck https://github.com/grafana/loki/issues/19923
+    image: grafana/loki:3.5.9
     container_name: loki
     user: root
     command:
       - "-config.file=/etc/loki/config.yaml"
       - "-config.expand-env=true"
-    ports:
-      - "3100:3100"
+    expose:
+      - "3100"
     volumes:
       - loki_data:/loki
       - ./loki/config.yaml:/etc/loki/config.yaml
-      - loki_chunks:/tmp/loki/chunks
-      - loki_index:/tmp/loki/index
     healthcheck:
       test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      start_period: 30s
+      interval: 30s
+      timeout: 3s
+      retries: 3
     networks:
-      - monitor_network
+      - observability_network
 
   grafana:
     image: grafana/grafana:12.4.0-20082909961-ubuntu
@@ -115,17 +144,65 @@ services:
       - ./grafana/provisioning/:/etc/grafana/provisioning/
     environment:
       - GF_SECURITY_ADMIN_USER=${GF_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     healthcheck:
-      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: [ "CMD-SHELL", "curl -s -f http://localhost:3000/api/health || exit 1" ]
+      start_period: 3s
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    expose:
+      - "3000"
     ports:
       - "3000:3000"
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
     networks:
-      - monitor_network
+      - observability_network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
+  pyroscope:
+    container_name: pyroscope
+    image: grafana/pyroscope:1.17.0
+    expose:
+      - "4040"
+    command:
+      - "server"
+    volumes:
+      - pyroscope_data:/var/lib/pyroscope
+    networks:
+      - observability_network
+
+  tempo:
+    image: grafana/tempo:2.8.0
+    container_name: tempo
+    command:
+      - "-config.file=/etc/tempo/config.yaml"
+    expose:
+      - "3200"  # HTTP API
+      - "4317"  # OTLP gRPC
+      - "4318"  # OTLP HTTP
+    volumes:
+      - ./tempo/config.yaml:/etc/tempo/config.yaml
+      - tempo_data:/var/tempo
+    healthcheck:
+      test: [ "CMD", "/busybox/wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3200/ready" ]
+      start_period: 10s
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - observability_network
 
   #  pushgateway:
   #    image: prom/pushgateway:v1.6.0
@@ -133,17 +210,17 @@ services:
   #    ports:
   #      - 9091:9091
   #    networks:
-  #      - monitor_network
+  #      - observability_network
 
 
 networks:
-  monitor_network:
-    name: "monitor_network"
+  observability_network:
+    name: "observability_network"
     driver: bridge
 
 volumes:
   loki_data:
-  loki_chunks:
-  loki_index:
   grafana_data:
   victoriametrics_data:
+  pyroscope_data:
+  tempo_data:

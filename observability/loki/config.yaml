@@ -1,7 +1,6 @@
-
 # This is a complete configuration to deploy Loki backed by the filesystem.
 # The index will be shipped to the storage via tsdb-shipper.
-
+# https://oneuptime.com/blog/post/2026-01-21-loki-storage-backends/view
 auth_enabled: false
 
 server:
@@ -13,18 +12,81 @@ common:
     kvstore:
       store: inmemory
   replication_factor: 1
-  path_prefix: /tmp/loki
+  path_prefix: /loki
 
 schema_config:
   configs:
-  - from: 2020-05-15
-    store: tsdb
-    object_store: filesystem
-    schema: v13
-    index:
-      prefix: index_
-      period: 24h
+    - from: 2020-05-15
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
 
 storage_config:
   filesystem:
-    directory: /tmp/loki/chunks
+    directory: /loki/chunks
+  #  aws:
+  #    # s3://access_key:secret_access_key@custom_endpoint/bucket_name
+  #    endpoint: ${AWS_S3_ENDPOINT}
+  #    bucketnames: ${AWS_LOKI_BUCKET}
+  #    region: ${AWS_REGION}
+  #    access_key_id: ${AWS_ACCESS_KEY_ID}
+  #    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+  #    s3forcepathstyle: true
+  #    insecure: false
+
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+    cache_ttl: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  # retention_enabled: true # удаляем старые чанки (зависит от retention_period)
+  # retention_delete_delay: 2h
+  # delete_request_store: s3
+
+limits_config:
+
+  # Retention
+  # retention_period: 180d # храним 180 дней
+  # Rate limits
+  ingestion_rate_strategy: global
+  ingestion_rate_mb: 10
+  ingestion_burst_size_mb: 20
+  per_stream_rate_limit: 3MB
+  per_stream_rate_limit_burst: 15MB
+
+  # Stream limits
+  max_global_streams_per_user: 10000
+  max_streams_per_user: 0
+
+  # Validation
+  max_line_size: 256KB
+  max_line_size_truncate: false
+  max_label_name_length: 1024
+  max_label_value_length: 2048
+  max_label_names_per_series: 15
+
+  # Time constraints
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h  # 7 days
+  creation_grace_period: 10m
+  unordered_writes: true
+
+ingester:
+  # Chunk settings
+  chunk_idle_period: 30m
+  chunk_target_size: 1572864  # 1.5 MB
+  chunk_encoding: snappy
+  max_chunk_age: 2h
+
+  # WAL settings
+  wal:
+    enabled: true
+    dir: /loki/wal
+    checkpoint_duration: 5m
+    flush_on_shutdown: true

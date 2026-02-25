@@ -1,0 +1,49 @@
+pg_long_running_queries:
+  query: |
+    SELECT
+      pid::text                                                    AS pid,
+      COALESCE(usename, '')                                        AS usename,
+      COALESCE(application_name, '')                               AS application_name,
+      COALESCE(client_addr::text, 'local')                        AS client_addr,
+      state,
+      COALESCE(wait_event_type, '')                                AS wait_event_type,
+      COALESCE(wait_event, '')                                     AS wait_event,
+      EXTRACT(EPOCH FROM (now() - xact_start))::float             AS xact_duration_seconds,
+      EXTRACT(EPOCH FROM (now() - query_start))::float            AS query_duration_seconds,
+      left(COALESCE(query, ''), 200)                              AS query_text
+    FROM pg_stat_activity
+    WHERE state IS NOT NULL
+      AND state != 'idle'
+      AND xact_start IS NOT NULL
+      AND EXTRACT(EPOCH FROM (now() - xact_start)) > 0
+  metrics:
+    - pid:
+        usage: LABEL
+        description: "Process ID"
+    - usename:
+        usage: LABEL
+        description: "User name"
+    - application_name:
+        usage: LABEL
+        description: "Application name"
+    - client_addr:
+        usage: LABEL
+        description: "Client address"
+    - state:
+        usage: LABEL
+        description: "Connection state"
+    - wait_event_type:
+        usage: LABEL
+        description: "Wait event type"
+    - wait_event:
+        usage: LABEL
+        description: "Wait event"
+    - query_text:
+        usage: LABEL
+        description: "Query text (first 200 chars)"
+    - xact_duration_seconds:
+        usage: GAUGE
+        description: "Duration of current transaction in seconds"
+    - query_duration_seconds:
+        usage: GAUGE
+        description: "Duration of current query in seconds"

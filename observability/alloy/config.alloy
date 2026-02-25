@@ -1,113 +1,176 @@
+// =============================================================================
+// LOGGING
+// =============================================================================
+
 logging {
-  level  = "info"  // Временно на debug для диагностики; смените на info в production
+  level  = "info"
   format = "logfmt"
 }
 
-// Discovery Docker: Обнаруживает контейнеры и извлекает metadata. Host — ключевой для доступа к сокету.
+// =============================================================================
+// DISCOVERY
+// =============================================================================
+
 discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
+  host             = "unix:///var/run/docker.sock"
   refresh_interval = "10s"
 }
 
-// Делает relabel
+// Relabel для логов: извлекает метаданные контейнеров.
 discovery.relabel "containers" {
   targets = discovery.docker.containers.targets
+
   rule {
     source_labels = ["__meta_docker_container_name"]
-    regex = "/(.*)"
-    target_label = "container"
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
   }
 
   rule {
     source_labels = ["__meta_docker_container_id"]
-    target_label = "container_id"
-  }
-
-  rule {
-    target_label = "job"
-    replacement = "docker"
-  }
-  rule {
-    target_label = "host"
-    replacement = constants.hostname
-  }
-
-  rule {
-    source_labels = ["__meta_docker_container_log_stream"]
-    target_label = "stream"
+    target_label  = "container_id"
   }
 
   rule {
     source_labels = ["__meta_docker_container_label_env"]
-    target_label = "env"
+    target_label  = "env"
   }
 
   rule {
-    source_labels = ["__meta_docker_container_network_mode"]
-    target_label = "network_mode"
-  }
-  rule {
-    source_labels = ["__meta_docker_network_ip"]
-    target_label = "network_ip"
+    target_label = "host"
+    replacement  = constants.hostname
   }
 
   rule {
-    source_labels = ["__meta_docker_network_id"]
-    target_label = "network_id"
-  }
-
-  rule {
-    source_labels = ["__meta_docker_port_public"]
-    target_label = "public_port"
-  }
-  rule {
-    source_labels = ["__meta_docker_port_public_ip"]
-    target_label = "public_ip"
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
   }
 }
 
-// Loki source Docker: Собирает логи из контейнеров, применяет labels и relabel, forwards в write.
+// Relabel для метрик приложений: берёт уже обработанные таргеты из containers
+// (service, container, env уже проставлены) и настраивает адрес скрейпа.
+discovery.relabel "backend_metrics" {
+  targets = discovery.relabel.containers.output
+
+  rule {
+    source_labels = ["service"]
+    regex         = "backend"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_network_ip"]
+    target_label  = "__address__"
+    replacement   = "$1:8000"
+  }
+}
+
+// =============================================================================
+// LOGS → LOKI
+// =============================================================================
+
 loki.source.docker "default" {
   host          = "unix:///var/run/docker.sock"
   targets       = discovery.docker.containers.targets
   labels        = {"platform" = "docker"}
   relabel_rules = discovery.relabel.containers.rules
-  forward_to    = [loki.write.local.receiver]
+  forward_to    = [loki.write.default.receiver]
 }
 
-// Loki write: Отправляет логи в Loki. URL — полный endpoint.
-loki.write "local" {
+loki.write "default" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
   }
 }
 
-// Prometheus exporter: Собирает метрики хоста.
+// =============================================================================
+// METRICS → VICTORIAMETRICS
+// =============================================================================
+
+prometheus.remote_write "victoriametrics" {
+  endpoint {
+    url = "http://victoriametrics:8428/api/v1/write"
+  }
+}
+
+// -- Host metrics (node exporter) ---------------------------------------------
+
 prometheus.exporter.unix "default" {
   enable_collectors = [
-    "arp", "bcache", "bonding", "btrfs", "buddyinfo", "conntrack", "cpu", "cpufreq",
-    "diskstats", "dmi", "drbd", "drm", "edac", "entropy", "ethtool", "fibrechannel",
-    "filefd", "filesystem", "hwmon", "infiniband", "interrupts", "ipvs", "ksmd",
-    "lnstat", "loadavg", "logind", "mdadm", "meminfo", "meminfo_numa", "mountstats",
-    "netclass", "netdev", "netstat", "network_route", "nfs", "nfsd", "ntp", "nvme",
-    "os", "perf", "powersupplyclass", "pressure", "processes", "qdisc", "rapl",
-    "runit", "schedstat", "sockstat", "softirqs", "softnet", "stat", "supervisord",
-    "sysctl", "systemd", "tapestats", "tcpstat", "textfile", "thermal_zone", "time",
-    "timex", "udp_queues", "uname", "vmstat", "wifi", "xfs", "zfs", "zoneinfo",
+    "cpu", "cpufreq", "diskstats", "filesystem",
+    "loadavg", "meminfo", "netdev", "netstat",
+    "pressure", "processes", "sockstat", "softnet",
+    "stat", "time", "uname", "vmstat",
   ]
 }
 
-// Prometheus scrape: Скрапаем метрики c хоста (ноды).
 prometheus.scrape "node" {
   targets         = prometheus.exporter.unix.default.targets
-  scrape_interval = "15s"
+  scrape_interval = "20s"
   scrape_timeout  = "10s"
   forward_to      = [prometheus.remote_write.victoriametrics.receiver]
 }
 
-// Prometheus remote write: Отправляет метрики в victoriametrics.
-prometheus.remote_write "victoriametrics" {
+// -- Backend metrics (FastAPI) ------------------------------------------------
+
+prometheus.scrape "backend" {
+  targets         = discovery.relabel.backend_metrics.output
+  scrape_interval = "20s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+}
+
+// -- PostgreSQL metrics -------------------------------------------------------
+prometheus.exporter.postgres "default" {
+  data_source_names          = [sys.env("POSTGRES_URL")]
+  custom_queries_config_path = "/etc/alloy/queries.yaml"
+}
+
+prometheus.scrape "postgres" {
+  targets         = prometheus.exporter.postgres.default.targets
+  scrape_interval = "20s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+}
+
+// =============================================================================
+// PROFILES → PYROSCOPE
+// =============================================================================
+
+pyroscope.receive_http "default" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port    = 4040
+  }
+  forward_to = [pyroscope.write.default.receiver]
+}
+
+pyroscope.write "default" {
   endpoint {
-    url = "http://victoriametrics:8428/api/v1/write"
+    url = "http://pyroscope:4040"
+  }
+}
+
+// =============================================================================
+// TRACES → TEMPO
+// =============================================================================
+
+otelcol.receiver.otlp "default" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls { insecure = true }
   }
 }
