@@ -4,8 +4,6 @@ import logging
 import logging.config
 from typing import override
 
-from opentelemetry import trace
-
 from src.env import LOG_LEVEL
 
 request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
@@ -17,8 +15,8 @@ _APP_FMT = (
     "pid=%(process)d "
     "caller=%(module)s:%(lineno)d "
     "request_id=%(request_id)s "
-    "trace_id=%(trace_id)s "
-    "span_id=%(span_id)s "
+    "trace_id=%(otelTraceID)s "
+    "span_id=%(otelSpanID)s "
     "msg=%(message)s"
 )
 _SYSTEM_FMT = (
@@ -42,16 +40,11 @@ class LogFormatter(logging.Formatter):
 
 
 class RequestIdFilter(logging.Filter):
-    """Injects request_id, trace_id and span_id into every log record."""
+    """Injects request_id into every log record."""
 
     @override
     def filter(self, record: logging.LogRecord) -> bool:
-        record.__dict__["request_id"] = request_id_ctx_var.get("")
-
-        span = trace.get_current_span()
-        ctx = span.get_span_context()
-        record.__dict__["trace_id"] = trace.format_trace_id(ctx.trace_id)
-        record.__dict__["span_id"] = trace.format_span_id(ctx.span_id)
+        record.request_id = request_id_ctx_var.get("")
         return True
 
 
