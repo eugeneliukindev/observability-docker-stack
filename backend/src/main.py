@@ -41,7 +41,7 @@ async def healthcheck() -> JSONResponse:
 @app.get("/api/items")
 async def list_items():
     await asyncio.sleep(random.uniform(0.01, 0.1))
-    log.info("Listing items")
+    log.app.info("Listing items")
     return {"items": [{"id": i, "name": f"Item {i}", "price": round(random.uniform(10, 999), 2)} for i in range(1, 6)]}
 
 
@@ -52,7 +52,7 @@ async def get_item(item_id: int):
         raise HTTPException(status_code=400, detail="item_id must be positive")
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
-    log.info("Getting item id=%d", item_id)
+    log.app.info("Getting item id=%d", item_id)
     return {"id": item_id, "name": f"Item {item_id}", "price": round(random.uniform(10, 999), 2)}
 
 
@@ -62,7 +62,7 @@ async def create_item(body: ItemBody):
     if not body.name.strip():
         raise HTTPException(status_code=422, detail="name cannot be empty")
     new_id = random.randint(100, 9999)
-    log.info("Created item id=%d name=%s", new_id, body.name)
+    log.app.info("Created item id=%d name=%s", new_id, body.name)
     return {"id": new_id, "name": body.name, "price": body.price}
 
 
@@ -71,7 +71,7 @@ async def update_item(item_id: int, body: ItemBody):
     await asyncio.sleep(random.uniform(0.01, 0.1))
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
-    log.info("Updated item id=%d", item_id)
+    log.app.info("Updated item id=%d", item_id)
     return {"id": item_id, "name": body.name, "price": body.price}
 
 
@@ -80,7 +80,7 @@ async def patch_item(item_id: int, body: ItemBody):
     await asyncio.sleep(random.uniform(0.01, 0.08))
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
-    log.info("Patched item id=%d", item_id)
+    log.app.info("Patched item id=%d", item_id)
     return {"id": item_id, "name": body.name, "price": body.price}
 
 
@@ -89,7 +89,7 @@ async def delete_item(item_id: int):
     await asyncio.sleep(random.uniform(0.005, 0.05))
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
-    log.info("Deleted item id=%d", item_id)
+    log.app.info("Deleted item id=%d", item_id)
 
 
 # --- Orders ---
@@ -97,7 +97,7 @@ async def delete_item(item_id: int):
 @app.post("/api/orders", status_code=201)
 async def create_order(body: dict):
     await asyncio.sleep(random.uniform(0.05, 0.3))
-    log.info("Created order")
+    log.app.info("Created order")
     return {"order_id": random.randint(1000, 9999), "status": "pending"}
 
 
@@ -114,7 +114,7 @@ async def cancel_order(order_id: int):
     await asyncio.sleep(random.uniform(0.02, 0.1))
     if order_id > 9999:
         raise HTTPException(status_code=404, detail="Order not found")
-    log.info("Cancelled order id=%d", order_id)
+    log.app.info("Cancelled order id=%d", order_id)
 
 
 # --- Slow / error / chaos ---
@@ -123,7 +123,7 @@ async def cancel_order(order_id: int):
 async def slow_endpoint():
     delay = random.uniform(0.5, 3.0)
     await asyncio.sleep(delay)
-    log.info("Slow request delay=%.2fs", delay)
+    log.app.info("Slow request delay=%.2fs", delay)
     return {"delay": delay}
 
 
@@ -131,7 +131,7 @@ async def slow_endpoint():
 async def very_slow_endpoint():
     delay = random.uniform(3.0, 8.0)
     await asyncio.sleep(delay)
-    log.info("Very slow request delay=%.2fs", delay)
+    log.app.info("Very slow request delay=%.2fs", delay)
     return {"delay": delay}
 
 
@@ -163,7 +163,7 @@ async def server_error():
 
 @app.get("/api/exception")
 async def raise_exception():
-    log.error("Unhandled exception occurred")
+    log.app.error("Unhandled exception occurred")
     raise RuntimeError("Something went terribly wrong")
 
 
@@ -181,3 +181,7 @@ async def random_response():
     if choice == "slow":
         await asyncio.sleep(random.uniform(1.0, 4.0))
     return {"result": "ok", "choice": choice}
+
+@app.get("/api/system-log")
+def system_log():
+    log.system.info("System log") # no log correlation opentelemetry

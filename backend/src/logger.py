@@ -2,6 +2,7 @@ import contextvars
 import json
 import logging
 import logging.config
+from dataclasses import dataclass
 from typing import override
 
 from src.env import LOG_LEVEL
@@ -54,13 +55,13 @@ LOGGING_CONFIG: dict = {
     "version": 1,
     "disable_existing_loggers": False,
     "filters": {
-        "request_id": {"()": f"{__name__}.RequestIdFilter"},
+        "request_id": {"()": RequestIdFilter},
     },
     "formatters": {
         # app logs — include request/trace context
-        "app": {"()": f"{__name__}.LogFormatter", "format": _APP_FMT, "datefmt": _DATE_FMT},
+        "app": {"()": LogFormatter, "format": _APP_FMT, "datefmt": _DATE_FMT},
         # system logs (gunicorn/uvicorn internals) — no request context
-        "system": {"()": f"{__name__}.LogFormatter", "format": _SYSTEM_FMT, "datefmt": _DATE_FMT},
+        "system": {"()": LogFormatter, "format": _SYSTEM_FMT, "datefmt": _DATE_FMT},
     },
     "handlers": {
         # app logs — request/trace context fields
@@ -90,6 +91,7 @@ LOGGING_CONFIG: dict = {
     "loggers": {
         # app has its own handler — doesn't propagate to avoid double logging
         "app": {"level": LOG_LEVEL, "handlers": ["stdout_app"], "propagate": False},
+        "system": {"level": LOG_LEVEL, "handlers": ["stdout_system"], "propagate": False},
         # uvicorn internals → propagate to root (system fmt) except .error → stderr
         "uvicorn": {"handlers": [], "propagate": True},
         "uvicorn.error": {"handlers": ["stderr"], "propagate": False},
@@ -107,4 +109,9 @@ def configure_logging() -> None:
     logging.config.dictConfig(LOGGING_CONFIG)
 
 
-log = logging.getLogger("app")
+@dataclass(frozen=True, slots=True)
+class Logger:
+    app = logging.getLogger("app")
+    system = logging.getLogger("system")
+
+log = Logger()

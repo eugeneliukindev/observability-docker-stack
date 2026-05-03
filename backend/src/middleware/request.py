@@ -31,7 +31,7 @@ class RequestAccessMiddleware(ObservabilityMiddleware):
 
         response.headers[REQUEST_ID_HEADER] = request_id
 
-        log.info(
+        log.app.info(
             ACCESS_LOG_MESSAGE_FORMAT,
             method,
             full_url,
