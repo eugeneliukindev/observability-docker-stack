@@ -36,7 +36,7 @@ class ObservabilityBuilder:
         service_name: str | None = None,
         service_version: str | None = None,
         insecure: bool = True,
-    ) -> OtlpBuilder:
+    ) -> OtlpBuilder[Self]:
         tracer_provider = create_tracer_provider(
             endpoint=endpoint,
             service_name=service_name or self._service_name,

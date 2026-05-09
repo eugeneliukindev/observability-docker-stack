@@ -11,10 +11,10 @@ if TYPE_CHECKING:
     from src.observability.builder import ObservabilityBuilder
 
 
-class OtlpBuilder:
+class OtlpBuilder[T: ObservabilityBuilder]:
     def __init__(
         self,
-        parent: ObservabilityBuilder,
+        parent: T,
         tracer_provider: TracerProvider,
     ) -> None:
         self._parent = parent
@@ -33,5 +33,5 @@ class OtlpBuilder:
         )
         return self
 
-    def done(self) -> ObservabilityBuilder:
+    def done(self) -> T:
         return self._parent
