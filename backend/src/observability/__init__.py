@@ -1,3 +1,3 @@
-__all__ = ["init_observability"]
+__all__ = ["ObservabilityBuilder"]
 
-from .init import init_observability
+from .builder import ObservabilityBuilder

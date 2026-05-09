@@ -1,14 +1,14 @@
-import pyroscope
+from __future__ import annotations
 
-from src.env import APP_NAME, PYROSCOPE_HOST, PYROSCOPE_PORT
+import pyroscope
 
 
 def init_pyroscope(
-    application_name: str = APP_NAME,
-    host: str = PYROSCOPE_HOST,
-    port: int = PYROSCOPE_PORT,
+    application_name: str,
+    host: str,
+    port: int,
     secure: bool = False,
-):
+) -> None:
     # Per-endpoint CPU profiling via pyroscope.tag_wrapper is not supported in async Python:
     # tag_wrapper uses thread-local storage, so tags leak across concurrent coroutines on the
     # same OS thread. Per-trace profiles are linked via PyroscopeSpanProcessor instead.

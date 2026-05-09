@@ -1,6 +1,9 @@
 import os
 
+from prometheus_client import multiprocess as prom_mp
+
 from src.logger import LOGGING_CONFIG
+from src.observability.prometheus.constants import WORKERS_CONFIGURED, WORKERS_GAUGE
 
 # Server socket
 bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"
@@ -22,8 +25,6 @@ def on_starting(server):
     Sets WORKERS_CONFIGURED so alerting rules can compare it against
     the live worker count without hardcoding the threshold.
     """
-    from src.observability.prometheus.constants import WORKERS_CONFIGURED
-
     WORKERS_CONFIGURED.set(workers)
 
 
@@ -34,8 +35,6 @@ def post_fork(server, worker):
     multiprocess_mode='livesum', prometheus aggregates all live workers
     to produce the total active worker count.
     """
-    from src.observability.prometheus.constants import WORKERS_GAUGE
-
     WORKERS_GAUGE.set(1)
 
 
@@ -45,6 +44,4 @@ def child_exit(server, worker):
     Marks the worker's prometheus metrics files as dead so they are
     excluded from aggregation by MultiProcessCollector.
     """
-    from prometheus_client import multiprocess as prom_mp
-
     prom_mp.mark_process_dead(worker.pid)

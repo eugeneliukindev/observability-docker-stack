@@ -6,19 +6,33 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.__version__ import VERSION
-from src.env import APP_NAME
+from src.env import APP_NAME, EXCLUDED_URLS, OTLP_ENDPOINT, PYROSCOPE_HOST, PYROSCOPE_PORT
 from src.logger import configure_logging, log
 from src.middleware import MetricsMiddleware, RequestAccessMiddleware
-from src.observability import init_observability
+from src.observability import ObservabilityBuilder
 
 configure_logging()
 
 app = FastAPI(title=APP_NAME, version=VERSION)
 
-app.add_middleware(MetricsMiddleware)
-app.add_middleware(RequestAccessMiddleware)
-
-init_observability(app=app)
+app.add_middleware(MetricsMiddleware, excluded_urls=EXCLUDED_URLS)
+app.add_middleware(RequestAccessMiddleware, excluded_urls=EXCLUDED_URLS)
+# fmt: off
+(
+    ObservabilityBuilder(
+        app,
+        service_name=APP_NAME,
+        service_version=VERSION,
+        excluded_urls=EXCLUDED_URLS,
+    )
+    .with_otlp(OTLP_ENDPOINT)
+        .with_logging()
+        .with_fastapi()
+        .done()
+    .with_prometheus()
+    .with_pyroscope(PYROSCOPE_HOST, PYROSCOPE_PORT)
+)
+# fmt: on
 
 
 class ItemBody(BaseModel):
@@ -27,7 +41,7 @@ class ItemBody(BaseModel):
 
 
 @app.get("/")
-def read_root():
+def read_root() -> dict[str, str]:
     return {"message": "API is running", "version": VERSION}
 
 
@@ -38,15 +52,16 @@ async def healthcheck() -> JSONResponse:
 
 # --- Items CRUD ---
 
+
 @app.get("/api/items")
-async def list_items():
+async def list_items() -> dict[str, list[dict[str, object]]]:
     await asyncio.sleep(random.uniform(0.01, 0.1))
     log.app.info("Listing items")
     return {"items": [{"id": i, "name": f"Item {i}", "price": round(random.uniform(10, 999), 2)} for i in range(1, 6)]}
 
 
 @app.get("/api/items/{item_id}")
-async def get_item(item_id: int):
+async def get_item(item_id: int) -> dict[str, object]:
     await asyncio.sleep(random.uniform(0.005, 0.05))
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="item_id must be positive")
@@ -57,7 +72,7 @@ async def get_item(item_id: int):
 
 
 @app.post("/api/items", status_code=201)
-async def create_item(body: ItemBody):
+async def create_item(body: ItemBody) -> dict[str, object]:
     await asyncio.sleep(random.uniform(0.02, 0.15))
     if not body.name.strip():
         raise HTTPException(status_code=422, detail="name cannot be empty")
@@ -67,7 +82,7 @@ async def create_item(body: ItemBody):
 
 
 @app.put("/api/items/{item_id}")
-async def update_item(item_id: int, body: ItemBody):
+async def update_item(item_id: int, body: ItemBody) -> dict[str, object]:
     await asyncio.sleep(random.uniform(0.01, 0.1))
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -76,7 +91,7 @@ async def update_item(item_id: int, body: ItemBody):
 
 
 @app.patch("/api/items/{item_id}")
-async def patch_item(item_id: int, body: ItemBody):
+async def patch_item(item_id: int, body: ItemBody) -> dict[str, object]:
     await asyncio.sleep(random.uniform(0.01, 0.08))
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -85,7 +100,7 @@ async def patch_item(item_id: int, body: ItemBody):
 
 
 @app.delete("/api/items/{item_id}", status_code=204)
-async def delete_item(item_id: int):
+async def delete_item(item_id: int) -> None:
     await asyncio.sleep(random.uniform(0.005, 0.05))
     if item_id > 100:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -94,15 +109,16 @@ async def delete_item(item_id: int):
 
 # --- Orders ---
 
+
 @app.post("/api/orders", status_code=201)
-async def create_order(body: dict):
+async def create_order(body: dict[str, object]) -> dict[str, object]:
     await asyncio.sleep(random.uniform(0.05, 0.3))
     log.app.info("Created order")
     return {"order_id": random.randint(1000, 9999), "status": "pending"}
 
 
 @app.get("/api/orders/{order_id}")
-async def get_order(order_id: int):
+async def get_order(order_id: int) -> dict[str, object]:
     await asyncio.sleep(random.uniform(0.01, 0.07))
     if order_id > 9999:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -110,7 +126,7 @@ async def get_order(order_id: int):
 
 
 @app.delete("/api/orders/{order_id}", status_code=204)
-async def cancel_order(order_id: int):
+async def cancel_order(order_id: int) -> None:
     await asyncio.sleep(random.uniform(0.02, 0.1))
     if order_id > 9999:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -119,8 +135,9 @@ async def cancel_order(order_id: int):
 
 # --- Slow / error / chaos ---
 
+
 @app.get("/api/slow")
-async def slow_endpoint():
+async def slow_endpoint() -> dict[str, float]:
     delay = random.uniform(0.5, 3.0)
     await asyncio.sleep(delay)
     log.app.info("Slow request delay=%.2fs", delay)
@@ -128,7 +145,7 @@ async def slow_endpoint():
 
 
 @app.get("/api/very-slow")
-async def very_slow_endpoint():
+async def very_slow_endpoint() -> dict[str, float]:
     delay = random.uniform(3.0, 8.0)
     await asyncio.sleep(delay)
     log.app.info("Very slow request delay=%.2fs", delay)
@@ -136,10 +153,11 @@ async def very_slow_endpoint():
 
 
 @app.get("/api/cpu")
-async def cpu_bound():
+async def cpu_bound() -> dict[str, int]:
     """Fibonacci to generate CPU load — useful for profiling.
     Intentionally async so it runs on the event loop thread, which allows
     PyroscopeSpanProcessor to correctly tag CPU profiles with the span ID."""
+
     def fib(n: int) -> int:
         a, b = 0, 1
         for _ in range(n):
@@ -152,23 +170,23 @@ async def cpu_bound():
 
 
 @app.get("/api/bad-request")
-async def bad_request():
+async def bad_request() -> None:
     raise HTTPException(status_code=400, detail="Invalid parameters")
 
 
 @app.get("/api/server-error")
-async def server_error():
+async def server_error() -> None:
     raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/exception")
-async def raise_exception():
+async def raise_exception() -> None:
     log.app.error("Unhandled exception occurred")
     raise RuntimeError("Something went terribly wrong")
 
 
 @app.get("/api/random")
-async def random_response():
+async def random_response() -> dict[str, str]:
     await asyncio.sleep(random.uniform(0.01, 0.5))
     choice = random.choices(
         ["ok", "bad_request", "server_error", "slow"],
@@ -182,6 +200,7 @@ async def random_response():
         await asyncio.sleep(random.uniform(1.0, 4.0))
     return {"result": "ok", "choice": choice}
 
+
 @app.get("/api/system-log")
-def system_log():
-    log.system.info("System log") # no log correlation opentelemetry
+def system_log() -> None:
+    log.system.info("System log")  # no log correlation opentelemetry
