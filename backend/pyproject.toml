@@ -16,3 +16,20 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.50b0",
     "opentelemetry-instrumentation-logging>=0.61b0",
 ]
+
+[tool.ruff]
+line-length = 120
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = ["pyroscope", "pyroscope.otel"]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "mypy>=2.0.0",
+    "ruff>=0.15.12",
+]
