@@ -8,26 +8,24 @@ from typing import override
 from src.env import LOG_LEVEL
 
 request_id_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
+# fmt: off
+_BASE_FMT = (
+    "time=%(asctime)s "
+    "level=%(levelname)s "
+    "name=%(name)s "
+    "pid=%(process)d "
+    "caller=%(module)s:%(lineno)d"
+)
+_OTEL_FMT = (
+    "request_id=%(request_id)s " # from RequestIdFilter
+    "trace_id=%(otelTraceID)s " # from LoggingInstrumentor().instrument(set_logging_format=True)
+    "span_id=%(otelSpanID)s" # from LoggingInstrumentor().instrument(set_logging_format=True)
+)
+_MSG_FMT = "msg=%(message)s"
 
-_APP_FMT = (
-    "time=%(asctime)s "
-    "level=%(levelname)s "
-    "name=%(name)s "
-    "pid=%(process)d "
-    "caller=%(module)s:%(lineno)d "
-    "request_id=%(request_id)s "
-    "trace_id=%(otelTraceID)s "
-    "span_id=%(otelSpanID)s "
-    "msg=%(message)s"
-)
-_SYSTEM_FMT = (
-    "time=%(asctime)s "
-    "level=%(levelname)s "
-    "name=%(name)s "
-    "pid=%(process)d "
-    "caller=%(module)s:%(lineno)d "
-    "msg=%(message)s"
-)
+_SYSTEM_FMT = f"{_BASE_FMT} {_MSG_FMT}"
+_APP_FMT = f"{_BASE_FMT} {_OTEL_FMT} {_MSG_FMT}"
+# fmt: on
 _DATE_FMT = "%Y-%m-%dT%H:%M:%S"
 
 
@@ -51,7 +49,7 @@ class RequestIdFilter(logging.Filter):
 
 # Passed to gunicorn via logconfig_dict — applied at Logger init, before first log line.
 # Also used directly via configure_logging() when running with plain uvicorn.
-LOGGING_CONFIG: dict = {
+LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
     "filters": {
@@ -111,7 +109,11 @@ def configure_logging() -> None:
 
 @dataclass(frozen=True, slots=True)
 class Logger:
-    app = logging.getLogger("app")
-    system = logging.getLogger("system")
+    app: logging.Logger
+    system: logging.Logger
 
-log = Logger()
+
+log = Logger(
+    app=logging.getLogger("app"),
+    system=logging.getLogger("system"),
+)
